@@ -24,7 +24,7 @@ const char* password = "x";
 
 String apikey = "x";
 
-String cityName = "Brampton";
+String cityName = "Big Beaver";
 String city = cityName;
 String countrycode = "CA";
 
@@ -48,6 +48,9 @@ bool indoorActive = false;
 
 bool scroll = false;
 
+bool toggle_previous;
+bool scroll_previous;
+
 void setup() {
   Serial.begin(115200);
 
@@ -69,16 +72,16 @@ void setup() {
     timeout++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("Connected to %s",ssid);
+    Serial.printf("Connected to %s\n",ssid);
   } else {
-    Serial.println("\nWIFI STILL NOT CONNECTING :(");
+    Serial.println("WIFI STILL NOT CONNECTING :(\n");
   }
 
   delay(1000);
 }
 
 void displayDHT() {
-  lcd.clear();
+  
   float sensorHumid  = dht.readHumidity();
   
   float sensorTemp = dht.readTemperature(false);
@@ -87,43 +90,43 @@ void displayDHT() {
     //Serial.println("LCD Print started,");
     
 
-    char buffer1[16];//to store formatted text
-    sprintf(buffer1,"Temp:%.1f\337C",sensorTemp);
+    char buffer1[17];//to store formatted text
+    snprintf(buffer1,17,"Room Temp:%.1f\337C%-16s",sensorTemp, " ");//snprintf to maintain array size and overwrite previous characters
 
     lcd.setCursor(0, 0);
     lcd.print(buffer1);
    
-    char buffer2[16];//store humidity formatted
-    sprintf(buffer2, "Humidity:%.0f%%", sensorHumid);
+    char buffer2[17];//store humidity formatted
+    snprintf(buffer2, 17, "Humidity:%.0f%%%-16s", sensorHumid, " ");
 
     lcd.setCursor(0, 1);
     lcd.print(buffer2);
 
-    //Serial.printf("LCD Printed %s & %s\n",buffer1,buffer2);
     
     
-    delay(2000);
+    
+
   } else {
     Serial.println("Failed to read DHT");
   }
-  
-  delay(2000);
 }
 
 weatherData WeatherFetch(){
 
   if ((millis() - lastTime < timerDelay) && lastTime != 0) {
+    //Serial.printf("Timer Interval: %i\n",millis() - lastTime);
     return currentWeatherData;
   }
 
-  //update timer right away so we don't spam requests if network fails
-  lastTime = millis();
-
+  //update timer so we dont spam requests if network fails
+  
+  Serial.printf("Last time is: %i\n",lastTime);
+  Serial.printf("Current time is: %i\n",millis());
   weatherData data = currentWeatherData;
   if ((millis() - lastTime > timerDelay) || lastTime == 0 ) { //if current time minus previous api read timer is the read interval or previous read is at 0ms or first startup of code
     
     if (WiFi.status() == WL_CONNECTED){
-
+      Serial.printf("Weather fetch started\n-----------------------------\n");
       String weatherPath = "http://api.openweathermap.org/data/2.5/weather?q="+city+","+countrycode+"&APPID="+apikey+"&units=metric";
       HTTPClient http;
       http.begin(weatherPath);
@@ -168,6 +171,7 @@ weatherData WeatherFetch(){
               Serial.printf("temp: %.1f\nhumid: %.0f%%\ndesc: %s\nicon: %s\npop: %.0f%%\nrain: %.2fmm\n\n",data.temp, data.humid, data.desc.c_str(), data.icon,data.pop,data.rain);
 
               http.end();
+              lastTime = millis();
               return data;
             } else {
             Serial.printf("JSON Forecast Path parsing failed: %s",error2.c_str());
@@ -192,18 +196,18 @@ weatherData WeatherFetch(){
 
 void displayWeather(){
   //weatherData weatherInfo = WeatherFetch();
-  if (currentWeatherData.desc.length()==0){
+  /*if (currentWeatherData.desc.length()==0){
     lcd.clear();
     return;
-  }
-  lcd.clear();
-  char buffer1[16];//to store formatted text
-  sprintf(buffer1,"Temp:%.1f\337C",currentWeatherData.temp);
+  }*/
+  
+  char buffer1[17];//to store formatted text
+  snprintf(buffer1,17,"Temp:%.1f\337C%-16s",currentWeatherData.temp," ");
   lcd.setCursor(0, 1);
   lcd.print(buffer1);
 
-  char buffer2[16];
-  sprintf(buffer2,"%s,%s",cityName,countrycode);
+  char buffer2[17];
+  snprintf(buffer2,17,"%s,%s%-16s",cityName,countrycode," ");
   lcd.setCursor(0, 0);
   lcd.print(buffer2);
   
@@ -362,21 +366,21 @@ byte* icons_R[] { //pointer list
 };
 
 void displayWeatherScroll(){//implement real scrolling system to move down and scroll through all climat
-  //weatherData weatherInfo = WeatherFetch();
+  
   if (currentWeatherData.icon.length()==0){
     lcd.clear();
     return;
   }
 
-  lcd.clear();
+  
 
-  char buffer1[16];
-  sprintf(buffer1,"Humidity:%.0f%%",currentWeatherData.humid);
+  char buffer1[17];
+  snprintf(buffer1,17,"Humidity:%.0f%%%-16s",currentWeatherData.humid," ");
   lcd.setCursor(0, 0);
   lcd.print(buffer1);
 
-  char buffer2[16];//to store formatted text
-  sprintf(buffer2,"%s",currentWeatherData.desc.c_str());
+  char buffer2[17];//to store formatted text
+  snprintf(buffer2,17,"%s%-16s",currentWeatherData.desc.c_str()," ");
   lcd.setCursor(0, 1);
   lcd.print(buffer2);
 
@@ -396,27 +400,26 @@ void displayWeatherScroll(){//implement real scrolling system to move down and s
 
 void loop(){
   currentWeatherData = WeatherFetch();
-  /*if (digitalRead(screen_toggle_button) == LOW && indoorActive){//switching to indoor reading or weather on click
+  if (digitalRead(screen_toggle_button) == LOW && toggle_previous == HIGH && indoorActive){//switching to indoor reading or weather only on button click
     displayWeather();
     indoorActive = false;
     scroll = true;
-    delay(200);
-  } else if (digitalRead(screen_toggle_button) == LOW && !indoorActive) {
+    
+  } else if (digitalRead(screen_toggle_button) == LOW && toggle_previous == HIGH && !indoorActive) {
     displayDHT();
     indoorActive = true;
-    delay(200);
-  } else if (digitalRead(screen_scroll_button) == LOW && !indoorActive && scroll){//scrolling on weather screen
+    
+  } else if (digitalRead(screen_scroll_button) == LOW && scroll_previous == HIGH && !indoorActive && scroll){//scrolling on weather screen
     displayWeatherScroll();
     scroll = false;
-    delay(200);
-  } else if (digitalRead(screen_scroll_button) == LOW && !indoorActive && !scroll){//scrolling on weather screen
+    
+  } else if (digitalRead(screen_scroll_button) == LOW && scroll_previous == HIGH && !indoorActive && !scroll){//scrolling on weather screen
     displayWeather();
     scroll = true;
-    delay(200);
-  }*/
-  displayWeather();
-  delay(2000);
-  displayWeatherScroll();
+    
+  }
+  toggle_previous = digitalRead(screen_toggle_button);
+  scroll_previous = digitalRead(screen_scroll_button);
   
 
 }
