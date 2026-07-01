@@ -19,12 +19,13 @@ DHT dht(dht_pin, DHT11);
 
 LiquidCrystal lcd(RS,E,D4,D5,D6,D7);
 
+//home network credentials
 const char* ssid = "x";
 const char* password = "x";
 
 String apikey = "x";
 
-String cityName = "Big Beaver";
+String cityName = "Brampton";
 String city = cityName;
 String countrycode = "CA";
 
@@ -42,8 +43,6 @@ struct weatherData { //storing weather info in structure so its global
 
 weatherData currentWeatherData;
 
-//bool startup = false;
-
 bool indoorActive = false;
 
 bool scroll = false;
@@ -60,7 +59,6 @@ void setup() {
   pinMode(screen_scroll_button, INPUT_PULLUP);
 
   city.replace(" ","%20");
-  //startup = true;
 
   WiFi.begin(ssid,password);
 
@@ -72,7 +70,7 @@ void setup() {
     timeout++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("Connected to %s\n",ssid);
+    Serial.printf("\nConnected to %s\n",ssid);
   } else {
     Serial.println("WIFI STILL NOT CONNECTING :(\n");
   }
@@ -118,7 +116,7 @@ weatherData WeatherFetch(){
     return currentWeatherData;
   }
 
-  //update timer so we dont spam requests if network fails
+  
   
   Serial.printf("Last time is: %i\n",lastTime);
   Serial.printf("Current time is: %i\n",millis());
@@ -358,10 +356,10 @@ byte snow_R[] = {
   0x12
 };
 
-byte* icons_L[] { //pointer list
+byte* icons_L[] { //pointer list of icons on left side
   clearsky_L, fewclouds_L, scattclouds_L, brokenclouds_L, rain_L, rain_L, thunder_L, snow_L,
 };
-byte* icons_R[] { //pointer list
+byte* icons_R[] { //pointer list of right icons
   clearsky_R, fewclouds_R, scattclouds_R, brokenclouds_R, rain_R, rain_R, thunder_R, snow_R,
 };
 
@@ -371,8 +369,6 @@ void displayWeatherScroll(){//implement real scrolling system to move down and s
     lcd.clear();
     return;
   }
-
-  
 
   char buffer1[17];
   snprintf(buffer1,17,"Humidity:%.0f%%%-16s",currentWeatherData.humid," ");
