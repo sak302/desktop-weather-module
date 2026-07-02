@@ -1,8 +1,19 @@
+/*
+what to work on:
+- fixing name capitalization, can add with city.replace() where the " " is replaced with "%20"
+- better scrolling & more api data displayed
+- more visually appealing html pages, also html page for success instead of just printing
+
+*/
+
+
 #include <LiquidCrystal.h>
 #include <DHT.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
+#include <WebServer.h>
 
 const int dht_pin = 4;
 const int screen_toggle_button = 5;
@@ -19,15 +30,21 @@ DHT dht(dht_pin, DHT11);
 
 LiquidCrystal lcd(RS,E,D4,D5,D6,D7);
 
-//home network credentials
-const char* ssid = "x";
-const char* password = "x";
+const char* ap_ssid = "Weather-Module";
+const char* ap_password = "12345678!";
+WebServer server(80);
+String header;
 
-String apikey = "x";
+//preferences library to save wifi, location data, and api key to flash memory
+Preferences preferences;
 
-String cityName = "Brampton";
-String city = cityName;
-String countrycode = "CA";
+String ssid = "";
+String password = "";
+String apikey = "";
+String cityName = "";
+String countrycode = "";
+
+String city = ""; //so it can be altered later
 
 unsigned long lastTime = 0; //previous time API read occured
 unsigned long timerDelay = 600000;
@@ -50,17 +67,112 @@ bool scroll = false;
 bool toggle_previous;
 bool scroll_previous;
 
+//storing as raw cuz its easier and also in flash memory to save space
+const char portal_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE html>
+<html>
+<form action="/save_success" method="POST">
+  <label for="ssid">WiFi Name:</label><br>
+  <input type="text" id="ssid" name="ssid" required><br>
+  <label for="pass">WiFi Password:</label><br>
+  <input type="text" id="pass" name="pass" required><br>
+  <label for="api">API Key:</label><br>
+  <input type="text" id="api" name="api" required><br>
+  <label for="city">City Name:</label><br>
+  <input type="text" id="city" name="city" required><br>
+  <label for="country">Country Code (ISO 3166, ie. CA, FR, UK)</label><br>
+  <input type="text" id="country" name="country" required><br><br>
+  <input type="submit" value="Submit & Restart">
+</form>
+)rawliteral";
+
+void handleRoot(){//handles the "root" or base html page
+  server.send(200,"text/html",portal_html);
+}
+
+void handleSubmit(){//handles the submit button response
+  preferences.begin("weather-config",false);
+
+  if (server.hasArg("ssid") && server.hasArg("pass") && server.hasArg("api")
+  && server.hasArg("city") && server.hasArg("country")){//finding if server returns values
+
+    preferences.putString("wifi_ssid",server.arg("ssid"));//putting values in preferences
+    preferences.putString("wifi_pass",server.arg("pass"));
+    preferences.putString("weather_api_key",server.arg("api"));
+    preferences.putString("city_name",server.arg("city"));
+    preferences.putString("country_code",server.arg("country"));
+
+    preferences.end();
+    server.send(200,"text/plain","Submission Success! Restarting ESP...");
+    delay(1000);
+
+    ESP.restart();//restarting esp so regular program can run
+  }
+}
+
+void startPortal() {
+
+  WiFi.mode(WIFI_AP);
+
+  if (!WiFi.softAP(ap_ssid, ap_password)) {//loop if access point creation fails so nothing else runs
+      log_e("Soft AP creation failed.");
+      while (1);
+  }
+
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("AP IP address:");
+  Serial.println(IP);
+
+  server.on("/",HTTP_GET, handleRoot);//setting http_get and post requests from client
+  server.on("/save_success",HTTP_POST,handleSubmit);
+  server.begin();
+
+  lcd.begin(16,2);//displaying connect to wifi on lcd 
+  lcd.setCursor(0, 0);
+  lcd.print("Connect to WiFi:");
+  lcd.setCursor(0,1);
+  lcd.print(ap_ssid);
+
+  while (true){
+    server.handleClient();//handling client requests
+  }
+
+  
+}
+
 void setup() {
   Serial.begin(115200);
 
+  preferences.begin("weather-config",false);//read write mode
+ 
+  ssid = preferences.getString("wifi_ssid","");//setting variables to preference values
+  password = preferences.getString("wifi_pass","");
+  apikey = preferences.getString("weather_api_key","");
+  cityName = preferences.getString("city_name","");
+  countrycode = preferences.getString("country_code","");
+
+  preferences.end();
+
+//checking preferences
+if (ssid == "" ||password == "" ||apikey == "" ||cityName == "" ||countrycode == ""){
+  Serial.printf("\nssid: %s\npassword: %s\napikey: %s\ncityName: %s\ncountrycode: %s",ssid.c_str(),password.c_str(),apikey.c_str(),cityName.c_str(),countrycode.c_str());
+  startPortal();//shouldnt return so stays in wifi loop then restart
+}
+
+//initializing lcd, dht, buttons
   lcd.begin(16, 2);
   dht.begin();
   pinMode(screen_toggle_button, INPUT_PULLUP);
   pinMode(screen_scroll_button, INPUT_PULLUP);
 
+//making city name spaces API compatible
+  city = cityName;
   city.replace(" ","%20");
 
-  WiFi.begin(ssid,password);
+
+//connecting to home wifi network
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(),password.c_str());
 
   Serial.print("Connecting to WiFi");
   int timeout = 0;
@@ -70,7 +182,7 @@ void setup() {
     timeout++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\nConnected to %s\n",ssid);
+    Serial.printf("\nConnected to %s\n",ssid.c_str());
   } else {
     Serial.println("WIFI STILL NOT CONNECTING :(\n");
   }
@@ -79,15 +191,15 @@ void setup() {
 }
 
 void displayDHT() {
-  
+  //reading temp and humidity values
   float sensorHumid  = dht.readHumidity();
   
   float sensorTemp = dht.readTemperature(false);
   
-  if (isnan(sensorTemp) == false && isnan(sensorHumid) ==false){
+  if (!isnan(sensorTemp) && !isnan(sensorHumid)){//if both temp and humid are valid
     //Serial.println("LCD Print started,");
     
-
+    //updating lcd
     char buffer1[17];//to store formatted text
     snprintf(buffer1,17,"Room Temp:%.1f\337C%-16s",sensorTemp, " ");//snprintf to maintain array size and overwrite previous characters
 
@@ -110,7 +222,7 @@ void displayDHT() {
 }
 
 weatherData WeatherFetch(){
-
+  //timer to make sure the api is only fetched at a certain interval 
   if ((millis() - lastTime < timerDelay) && lastTime != 0) {
     //Serial.printf("Timer Interval: %i\n",millis() - lastTime);
     return currentWeatherData;
@@ -121,74 +233,72 @@ weatherData WeatherFetch(){
   Serial.printf("Last time is: %i\n",lastTime);
   Serial.printf("Current time is: %i\n",millis());
   weatherData data = currentWeatherData;
-  if ((millis() - lastTime > timerDelay) || lastTime == 0 ) { //if current time minus previous api read timer is the read interval or previous read is at 0ms or first startup of code
     
-    if (WiFi.status() == WL_CONNECTED){
-      Serial.printf("Weather fetch started\n-----------------------------\n");
-      String weatherPath = "http://api.openweathermap.org/data/2.5/weather?q="+city+","+countrycode+"&APPID="+apikey+"&units=metric";
-      HTTPClient http;
-      http.begin(weatherPath);
+  if (WiFi.status() == WL_CONNECTED){
+    Serial.printf("Weather fetch started\n-----------------------------\n");
+    String weatherPath = "http://api.openweathermap.org/data/2.5/weather?q="+city+","+countrycode+"&APPID="+apikey+"&units=metric";
+    HTTPClient http;
+    http.begin(weatherPath);
 
-      int weatherResponseCode = http.GET();
+    int weatherResponseCode = http.GET();//response code
 
-      if (weatherResponseCode > 0){
-        String weatherPayload = http.getString();
+    if (weatherResponseCode > 0){
+      String weatherPayload = http.getString();//stores json of text in weatherPayload
 
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, weatherPayload);
+      JsonDocument doc;//for holding json values
+      DeserializationError error = deserializeJson(doc, weatherPayload);//puts weatherpayload in doc and stores error
+      
+      if (!error){ //if no deserialization error store json values in their respective property of data
+        data.temp = doc["main"]["temp"];
+        data.humid = doc["main"]["humidity"];
+        data.desc = doc["weather"][0]["description"].as<String>();
+        data.icon = doc["weather"][0]["icon"].as<String>();
+
         
-        if (!error){ //if no deserialization error
-          data.temp = doc["main"]["temp"];
-          data.humid = doc["main"]["humidity"];
-          data.desc = doc["weather"][0]["description"].as<String>();
-          data.icon = doc["weather"][0]["icon"].as<String>();
 
-          
+        http.end();
 
-          http.end();
+        String forecastPath = "http://api.openweathermap.org/data/2.5/forecast?q="+city+","+countrycode+"&APPID="+apikey+"&units=metric";
+        http.begin(forecastPath);
 
-          String forecastPath = "http://api.openweathermap.org/data/2.5/forecast?q="+city+","+countrycode+"&APPID="+apikey+"&units=metric";
-          http.begin(forecastPath);
+        int forecastResponseCode = http.GET();
 
-          int forecastResponseCode = http.GET();
+        if (forecastResponseCode > 0){
+          String forecastPayload = http.getString();
+          JsonDocument doc2;
+          DeserializationError error2 = deserializeJson(doc2,forecastPayload);
 
-          if (forecastResponseCode > 0){
-            String forecastPayload = http.getString();
-            JsonDocument doc2;
-            DeserializationError error2 = deserializeJson(doc2,forecastPayload);
-
-            if (!error2){ //if no forecast error
-              data.pop = doc2["list"][0]["pop"];
-              data.pop = data.pop*100;
-              if (doc2["rain"]) {
-                data.rain = doc2["rain"][0]["3h"];
-              } else {
-                data.rain = 0.00;
-              }
-
-              Serial.printf("temp: %.1f\nhumid: %.0f%%\ndesc: %s\nicon: %s\npop: %.0f%%\nrain: %.2fmm\n\n",data.temp, data.humid, data.desc.c_str(), data.icon,data.pop,data.rain);
-
-              http.end();
-              lastTime = millis();
-              return data;
+          if (!error2){ //if no forecast error
+            data.pop = doc2["list"][0]["pop"];
+            data.pop = data.pop*100;
+            if (doc2["rain"]) {
+              data.rain = doc2["rain"][0]["3h"];
             } else {
-            Serial.printf("JSON Forecast Path parsing failed: %s",error2.c_str());
-            } 
-          } else {
-            Serial.printf("Error on forecast HTTP req: %i", forecastResponseCode);
-          }
+              data.rain = 0.00;
+            }
 
+            Serial.printf("temp: %.1f\nhumid: %.0f%%\ndesc: %s\nicon: %s\npop: %.0f%%\nrain: %.2fmm\n\n",data.temp, data.humid, data.desc.c_str(), data.icon,data.pop,data.rain);
+
+            http.end();
+            lastTime = millis();//updating last time api was fetched
+            return data;
+          } else {
+          Serial.printf("JSON Forecast Path parsing failed: %s",error2.c_str());
+          } 
         } else {
-          Serial.printf("JSON Weather Path parsing failed: %s",error.c_str());
-        } 
+          Serial.printf("Error on forecast HTTP req: %i", forecastResponseCode);
+        }
+
       } else {
-        Serial.printf("Error on weather HTTP req: %i", weatherResponseCode);
+        Serial.printf("JSON Weather Path parsing failed: %s",error.c_str());
       } 
     } else {
-      Serial.printf("WiFi disconnected D:%s\n",WiFi.status());
-    }
-    
+      Serial.printf("Error on weather HTTP req: %i", weatherResponseCode);
+    } 
+  } else {
+    Serial.printf("WiFi disconnected D:%i\n",WiFi.status());
   }
+    
   return currentWeatherData;
 }
 
@@ -416,6 +526,7 @@ void loop(){
   }
   toggle_previous = digitalRead(screen_toggle_button);
   scroll_previous = digitalRead(screen_scroll_button);
+  delay(50);
   
-
+    
 }
